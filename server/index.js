@@ -2,51 +2,48 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import twilio from 'twilio';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import initSqlJs from 'sql.js';
+import fs from 'fs';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Initialize Twilio client
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
 
-// Initialize SQLite database
 let db;
-const initializeDb = async () => {
-  db = await open({
-    filename: './database.sqlite',
-    driver: sqlite3.Database
-  });
 
-  await db.exec(`
+const initializeDb = async () => {
+  const SQL = await initSqlJs();
+
+  // Optional: Load from disk if you want persistence
+  // const filebuffer = fs.existsSync('./mock.sqlite') ? fs.readFileSync('./mock.sqlite') : null;
+  db = new SQL.Database(); // or new SQL.Database(filebuffer);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS subscribers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone_number TEXT UNIQUE NOT NULL,
+      phone_number TEXT PRIMARY KEY,
       notification_threshold REAL NOT NULL,
-      subscribed BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
+      subscribed INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 };
 
-initializeDb().catch(console.error);
+await initializeDb();
 
 app.use(cors());
 app.use(express.json());
 
-// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Subscribe endpoint
-app.post('/api/subscribe', async (req, res) => {
+app.post('/api/subscribe', (req, res) => {
   try {
     const { phoneNumber, notificationThreshold } = req.body;
 
@@ -54,30 +51,32 @@ app.post('/api/subscribe', async (req, res) => {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
 
-    // Add subscriber to database
-    await db.run(
-      'INSERT OR REPLACE INTO subscribers (phone_number, notification_threshold) VALUES (?, ?)',
+    db.run(
+      `INSERT OR REPLACE INTO subscribers (phone_number, notification_threshold, subscribed, created_at)
+       VALUES (?, ?, 1, datetime('now'))`,
       [phoneNumber, notificationThreshold]
     );
 
-    // Send welcome message
-    const welcomeMessage = `Welcome to GBP Tracker! 🎉\n\nYou'll receive notifications when GBP/USD reaches ${notificationThreshold}.\n\nCurrent rate: ${notificationThreshold}\n\nYou can unsubscribe at any time by visiting our website.`;
-    
-    await twilioClient.messages.create({
-      body: welcomeMessage,
-      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: `whatsapp:${phoneNumber}`
-    });
+    const welcomeMessage = `Welcome to GBP Tracker! 🎉\n\nYou'll receive notifications when GBP/USD reaches ${notificationThreshold}.\n\nYou can unsubscribe at any time by visiting our website.`;
 
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Failed to subscribe user:', error);
+    twilioClient.messages
+      .create({
+        body: welcomeMessage,
+        from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+        to: `whatsapp:${phoneNumber}`
+      })
+      .then(() => res.json({ success: true }))
+      .catch(err => {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to send WhatsApp message' });
+      });
+  } catch (err) {
+    console.error('Subscribe Error:', err);
     res.status(500).json({ error: 'Failed to subscribe user' });
   }
 });
 
-// Unsubscribe endpoint
-app.post('/api/unsubscribe', async (req, res) => {
+app.post('/api/unsubscribe', (req, res) => {
   try {
     const { phoneNumber } = req.body;
 
@@ -85,31 +84,32 @@ app.post('/api/unsubscribe', async (req, res) => {
       return res.status(400).json({ error: 'Missing phone number' });
     }
 
-    await db.run(
-      'UPDATE subscribers SET subscribed = false WHERE phone_number = ?',
-      [phoneNumber]
-    );
+    db.run(`UPDATE subscribers SET subscribed = 0 WHERE phone_number = ?`, [phoneNumber]);
 
     res.json({ success: true });
-  } catch (error) {
-    console.error('Failed to unsubscribe user:', error);
+  } catch (err) {
+    console.error('Unsubscribe Error:', err);
     res.status(500).json({ error: 'Failed to unsubscribe user' });
   }
 });
 
-// Get all subscribers
-app.get('/api/subscribers', async (req, res) => {
+app.get('/api/subscribers', (req, res) => {
   try {
-    const subscribers = await db.all('SELECT * FROM subscribers WHERE subscribed = true');
-    res.json(subscribers);
-  } catch (error) {
-    console.error('Failed to fetch subscribers:', error);
+    const stmt = db.prepare(`SELECT * FROM subscribers WHERE subscribed = 1`);
+    const results = [];
+
+    while (stmt.step()) {
+      results.push(stmt.getAsObject());
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error('Fetch Subscribers Error:', err);
     res.status(500).json({ error: 'Failed to fetch subscribers' });
   }
 });
 
-// WhatsApp notification endpoint
-app.post('/api/notifications/whatsapp', async (req, res) => {
+app.post('/api/notifications/whatsapp', (req, res) => {
   try {
     const { to, message } = req.body;
 
@@ -117,16 +117,21 @@ app.post('/api/notifications/whatsapp', async (req, res) => {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
 
-    // Send message using Twilio
-    const notification = await twilioClient.messages.create({
-      body: message,
-      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: `whatsapp:${to}`
-    });
-
-    res.json({ success: true, messageId: notification.sid });
-  } catch (error) {
-    console.error('Failed to send WhatsApp notification:', error);
+    twilioClient.messages
+      .create({
+        body: message,
+        from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+        to: `whatsapp:${to}`
+      })
+      .then(notification => {
+        res.json({ success: true, messageId: notification.sid });
+      })
+      .catch(err => {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to send notification' });
+      });
+  } catch (err) {
+    console.error('Notification Error:', err);
     res.status(500).json({ error: 'Failed to send notification' });
   }
 });
