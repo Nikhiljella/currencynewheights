@@ -5,8 +5,9 @@ import Footer from './Footer';
 import Dashboard from '../pages/Dashboard';
 import Subscribe from '../pages/Subscribe';
 import About from '../pages/About';
+import Admin from '../pages/Admin';
 
-type Route = 'dashboard' | 'subscribe' | 'about';
+type Route = 'dashboard' | 'subscribe' | 'about' | 'admin';
 
 export const Router = () => {
   const [currentRoute, setCurrentRoute] = useState<Route>('dashboard');
@@ -19,6 +20,8 @@ export const Router = () => {
         return <Subscribe />;
       case 'about':
         return <About />;
+      case 'admin':
+        return <Admin />;
       default:
         return <Dashboard />;
     }

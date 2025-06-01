@@ -1,10 +1,10 @@
 import React from 'react';
-import { PoundSterling, Bell, HelpCircle } from 'lucide-react';
+import { PoundSterling, Bell, HelpCircle, Users } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 
 interface HeaderProps {
   currentRoute: string;
-  setCurrentRoute: (route: 'dashboard' | 'subscribe' | 'about') => void;
+  setCurrentRoute: (route: 'dashboard' | 'subscribe' | 'about' | 'admin') => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ currentRoute, setCurrentRoute }) => {
@@ -55,6 +55,15 @@ const Header: React.FC<HeaderProps> = ({ currentRoute, setCurrentRoute }) => {
             >
               <HelpCircle size={16} className="md:hidden" />
               <span className="hidden md:inline">About</span>
+            </button>
+            <button
+              onClick={() => setCurrentRoute('admin')}
+              className={`px-3 py-2 rounded-md text-sm flex items-center ${
+                currentRoute === 'admin' ? 'bg-blue-800 font-medium' : 'text-blue-100 hover:bg-blue-800 hover:text-white'
+              }`}
+            >
+              <Users size={16} className="mr-1 hidden md:inline" />
+              Admin
             </button>
           </nav>
         </div>
